@@ -49,6 +49,12 @@ export async function getDB() {
         FOREIGN KEY(patient_id) REFERENCES users(id),
         FOREIGN KEY(doctor_id) REFERENCES doctors(id)
       );
+      CREATE TABLE IF NOT EXISTS date_availability (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        availability_date TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL CHECK(status IN ('Closed')),
+        reason TEXT DEFAULT ''
+      );
 
       CREATE UNIQUE INDEX IF NOT EXISTS idx_active_appointment_slot
       ON appointments(doctor_id, appointment_date, appointment_time)
@@ -192,6 +198,14 @@ export async function createAppointment({patientId,doctorId,date,time,concern}) 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(chosen.getTime()) || chosen < today) {
     throw new Error('Choose a valid date today or later (YYYY-MM-DD).');
   }
+  const closedDate = await database.getFirstAsync(
+  'SELECT id FROM date_availability WHERE availability_date=?',
+  [date]
+);
+
+if (closedDate) {
+  throw new Error('The clinic is closed on this date. Please choose another date.');
+}
   const doctor = await database.getFirstAsync('SELECT * FROM doctors WHERE id=? AND active=1', [doctorId]);
   if (!doctor) throw new Error('That doctor is not currently available.');
   if (time < doctor.start_time || time >= doctor.end_time) throw new Error('That time is outside the selected doctor’s shift.');
@@ -237,6 +251,7 @@ export async function deleteAppointment(id,userId) {
 export async function getAvailability(date) {
   const database = await getDB();
   const doctors = await getDoctors();
+  const closedDate = await getDateAvailability(date);
   const bookings = await database.getAllAsync(
     `SELECT doctor_id, appointment_time FROM appointments
      WHERE appointment_date=? AND status!='Cancelled'`, [date]
@@ -255,6 +270,65 @@ export async function getAvailability(date) {
       slots.push({time,available:!booked});
       minutes += 30;
     }
-    return {...doctor, slots};
+    return {
+  ...doctor,
+  slots: closedDate
+    ? slots.map(slot => ({...slot, available: false}))
+    : slots,
+  closed: !!closedDate,
+  closure_reason: closedDate?.reason || ''
+};
   });
+}
+export async function getDateAvailability(date) {
+  const database = await getDB();
+
+  return database.getFirstAsync(
+    'SELECT * FROM date_availability WHERE availability_date = ?',
+    [date]
+  );
+}
+
+export async function setDateAvailability(date, status, reason = '') {
+  const database = await getDB();
+
+  if (status === 'Available') {
+    await database.runAsync(
+      'DELETE FROM date_availability WHERE availability_date = ?',
+      [date]
+    );
+    return;
+  }
+
+  await database.runAsync(
+    `INSERT INTO date_availability
+      (availability_date, status, reason)
+     VALUES (?, 'Closed', ?)
+     ON CONFLICT(availability_date)
+     DO UPDATE SET status='Closed', reason=excluded.reason`,
+    [date, reason]
+  );
+}
+
+export async function updateDoctorShift(id, shift) {
+  const database = await getDB();
+
+  const shiftTimes = {
+    Morning: ['08:00', '12:00'],
+    Afternoon: ['13:00', '17:00'],
+    Night: ['18:00', '21:00']
+  };
+
+  if (!shiftTimes[shift]) {
+    throw new Error('Invalid doctor shift.');
+  }
+
+  const [start, end] = shiftTimes[shift];
+
+  await database.runAsync(
+    `UPDATE doctors
+     SET shift=?, start_time=?, end_time=?
+     WHERE id=?`,
+    [shift, start, end, id]
+  );
 }

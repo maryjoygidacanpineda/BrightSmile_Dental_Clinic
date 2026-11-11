@@ -15,7 +15,8 @@
       "package": "com.brightsmile.dentalclinic"
     },
     "plugins": [
-      "expo-sqlite"
+      "expo-sqlite",
+      "@react-native-community/datetimepicker"
     ]
   }
 }

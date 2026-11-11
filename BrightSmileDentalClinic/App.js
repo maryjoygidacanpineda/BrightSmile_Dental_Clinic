@@ -4,11 +4,14 @@ import {
   SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput,
   TouchableOpacity, View
 } from 'react-native';
+
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import {
   addDoctor, createAppointment, deleteAppointment, deleteDoctor,
   getAllDoctors, getAppointments, getAvailability, getDoctors, login, registerPatient,
-  updateAppointmentStatus, updateDoctorActive
+  updateAppointmentStatus, updateDoctorActive,
+  getDateAvailability, setDateAvailability, updateDoctorShift
 } from './src/db';
 
 const C = {
@@ -36,11 +39,34 @@ const todayISO = () => {
 };
 
 function Button({title,onPress,kind='primary',small=false,disabled=false}) {
-  return <TouchableOpacity disabled={disabled} onPress={onPress}
-    style={[styles.button,kind==='secondary'&&styles.secondaryButton,kind==='danger'&&styles.dangerButton,
-      kind==='ghost'&&styles.ghostButton,small&&styles.smallButton,disabled&&{opacity:.45}]}>
-    <Text style={[styles.buttonText,kind!=='primary'&&kind!=='danger'&&styles.secondaryText,small&&{fontSize:12}]}>{title}</Text>
-  </TouchableOpacity>;
+  return (
+    <TouchableOpacity
+      disabled={disabled}
+      onPress={onPress}
+      style={[
+        styles.button,
+        kind==='secondary' && styles.secondaryButton,
+        kind==='danger' && styles.dangerButton,
+        kind==='success' && styles.successButton,
+        kind==='warning' && styles.warningButton,
+        kind==='info' && styles.infoButton,
+        kind==='ghost' && styles.ghostButton,
+        small && styles.smallButton,
+        disabled && {opacity:.45}
+      ]}
+    >
+      <Text
+        style={[
+          styles.buttonText,
+          kind!=='primary' && kind!=='danger' && kind!=='success' &&
+          kind!=='warning' && kind!=='info' && styles.secondaryText,
+          small && {fontSize:12}
+        ]}
+      >
+        {title}
+      </Text>
+    </TouchableOpacity>
+  );
 }
 function Field({label,value,onChangeText,placeholder,secureTextEntry,keyboardType,multiline}) {
   return <View style={styles.fieldWrap}>
@@ -194,12 +220,12 @@ function MenuCard({icon,title,desc,onPress}) {
 
 function AdminDoctors({onBack,onLogout,reload}) {
   const [doctors,setDoctors]=useState([]); const [name,setName]=useState(''); const [email,setEmail]=useState('');
-  const [password,setPassword]=useState('doctor123'); const [specialization,setSpecialization]=useState('General Dentist');
+  const [password,setPassword]=useState('doctor123');
   const [shift,setShift]=useState('Morning');
   const load=async()=>setDoctors(await getAllDoctors());
   useEffect(()=>{load();},[]);
   const add=async()=>{if(!name.trim()||!email.trim()||password.length<6){Alert.alert('Missing details','Enter doctor name, email and a password with at least 6 characters.');return;}
-    try{await addDoctor({name,email,password,specialization,shift});setName('');setEmail('');await load();reload();Alert.alert('Doctor added','The doctor account and shift have been created.');}
+    try{await addDoctor({name,email,password,specialization: 'General Dentist',shift});setName('');setEmail('');await load();reload();Alert.alert('Doctor added','The doctor account and shift have been created.');}
     catch(e){Alert.alert('Could not add doctor',e.message);}
   };
   const remove=(d)=>Alert.alert('Remove doctor',`Remove ${d.name}?`,[{text:'Keep',style:'cancel'},{text:'Remove',style:'destructive',onPress:async()=>{try{await deleteDoctor(d.id);await load();reload();}catch(e){Alert.alert('Cannot remove',e.message);}}}]);
@@ -210,14 +236,28 @@ function AdminDoctors({onBack,onLogout,reload}) {
       <Field label="Doctor full name" value={name} onChangeText={setName}/>
       <Field label="Doctor email" value={email} onChangeText={setEmail} keyboardType="email-address"/>
       <Field label="Temporary password" value={password} onChangeText={setPassword} secureTextEntry/>
-      <Field label="Specialization" value={specialization} onChangeText={setSpecialization}/>
+      <Text style={styles.label}>Specialization</Text>
+      <Text style={styles.input}>General Dentist</Text>
       <Select label="Assigned shift" value={shift} onChange={setShift} options={shifts.map(s=>({label:s,value:s}))}/>
       <Text style={styles.hint}>Morning 8 AM–12 PM · Afternoon 1 PM–5 PM · Night 6 PM–9 PM</Text>
       <Button title="Add doctor" onPress={add}/>
     </Card>
     <Text style={styles.sectionTitle}>Current doctors ({doctors.length})</Text>
     {doctors.map(d=><Card key={d.id}><View style={styles.rowBetween}><View style={{flex:1}}><Text style={styles.cardTitle}>{d.name}</Text><Text style={styles.body}>{d.specialization}</Text><Text style={styles.muted}>{d.shift} · {displayTime(d.start_time)}–{displayTime(d.end_time)}</Text><Text style={styles.muted}>Login: {d.user_id ? 'Doctor account created' : 'No linked account'}</Text></View>
-      <View style={{gap:6}}><Status status={d.active?'Available':'Inactive'}/><Button title={d.active?'Deactivate':'Activate'} kind="secondary" small onPress={()=>toggle(d)}/><Button title="Delete" kind="danger" small onPress={()=>remove(d)}/></View></View></Card>)}
+      <View style={{gap:6}} Select
+  label="Doctor shift"
+  value={d.shift}
+  options={shifts.map(s=>({label:s,value:s}))}
+  onChange={async newShift => {
+    try {
+      await updateDoctorShift(d.id, newShift);
+      await load();
+      reload();
+      Alert.alert('Shift updated', `${d.name} is now assigned to ${newShift} shift.`);
+    } catch (e) {
+      Alert.alert('Update failed', e.message);
+    }
+  }}> <Status status={d.active?'Available':'Inactive'}/><Button title={d.active?'Deactivate':'Activate'} kind="secondary" small onPress={()=>toggle(d)}/><Button title="Delete" kind="danger" small onPress={()=>remove(d)}/></View></View></Card>)}
   </ScrollView>;
 }
 
@@ -238,16 +278,15 @@ function AdminAppointments({onBack,onLogout,reload}) {
   const [items,setItems]=useState([]); const [filter,setFilter]=useState('All');
   const load=async()=>setItems(await getAppointments({}));
   useEffect(()=>{load();},[]);
-  const change=async(item,status)=>{try{await updateAppointmentStatus(item.id,status,item.doctor_notes||'');await load();reload();}catch(e){Alert.alert('Update failed',e.message);}};
   const visible=items.filter(i=>filter==='All'||i.status===filter);
   return <View style={styles.flex}><View style={styles.screen}>
     <Header title="All appointments" subtitle={`${items.length} total bookings`} onBack={onBack} onLogout={onLogout}/>
     <Select label="Filter by status" value={filter} onChange={setFilter} options={['All','Scheduled','Completed','Cancelled'].map(x=>({label:x,value:x}))}/>
     <FlatList data={visible} keyExtractor={i=>String(i.id)} contentContainerStyle={{paddingBottom:30}}
       ListEmptyComponent={<Text style={styles.muted}>No appointments found.</Text>}
-      renderItem={({item})=><AppointmentCard item={item} actions={<>
-        {item.status==='Scheduled'&&<><Button title="Complete" small kind="secondary" onPress={()=>change(item,'Completed')}/><Button title="Cancel" small kind="danger" onPress={()=>change(item,'Cancelled')}/></>}
-      </>}/>}/>
+      renderItem={({item})=>(
+        <AppointmentCard item={item}/>
+      )}/>
   </View></View>;
 }
 
@@ -269,7 +308,8 @@ function DoctorAppointments({user,onBack,onLogout,reload}) {
 
 function BookingScreen({user,onBack,onLogout,reload}) {
   const [doctors,setDoctors]=useState([]); const [doctorId,setDoctorId]=useState(null);
-  const [date,setDate]=useState(todayISO()); const [time,setTime]=useState(''); const [concern,setConcern]=useState('');
+  const [date,setDate]=useState(todayISO()); const [showDatePicker, setShowDatePicker] = useState(false);
+  const [time,setTime]=useState(''); const [concern,setConcern]=useState('');
   const [availability,setAvailability]=useState([]); const [busy,setBusy]=useState(false);
   const load=async()=>{const ds=await getDoctors();setDoctors(ds);if(!doctorId&&ds.length)setDoctorId(ds[0].id);};
   useEffect(()=>{load();},[]);
@@ -277,8 +317,22 @@ function BookingScreen({user,onBack,onLogout,reload}) {
   const doctor=doctors.find(d=>d.id===doctorId);
   const chosen=availability.find(d=>d.id===doctorId);
   const slots=chosen?.slots||[];
+  const clinicClosed = chosen?.closed || false;
   const book=async()=>{if(!doctorId||!date||!time||!concern.trim()){Alert.alert('Complete the form','Choose a doctor, date, available time and enter your concern.');return;}
-    setBusy(true);try{const ref=await createAppointment({patientId:user.id,doctorId,date,time,concern});setTime('');setConcern('');reload();Alert.alert('Booking submitted',`Your booking reference is ${ref}. Status: Scheduled.`);setAvailability(await getAvailability(date));}
+    setBusy(true);try{const ref=await createAppointment({patientId:user.id,doctorId,date,time,concern});setTime('');setConcern('');reload();setTime('');
+setConcern('');
+reload();
+
+Alert.alert(
+  'Booking Successful',
+  `Your booking reference is ${ref}. Status: Scheduled.`,
+  [
+    {
+      text: 'OK',
+      onPress: () => onBack()
+    }
+  ]
+);setAvailability(await getAvailability(date));}
     catch(e){Alert.alert('Booking unavailable',e.message);setAvailability(await getAvailability(date));}finally{setBusy(false);}
   };
   return <KeyboardAvoidingView behavior={Platform.OS==='ios'?'padding':undefined} style={styles.flex}>
@@ -291,8 +345,42 @@ function BookingScreen({user,onBack,onLogout,reload}) {
         <Text style={{color:doctorId===d.id?C.blue:C.muted,fontWeight:'800'}}>{doctorId===d.id?'✓ Selected':'Select'}</Text>
       </TouchableOpacity>)}
       <Text style={styles.sectionTitle}>2. Choose appointment date</Text>
-      <Field label="Date (YYYY-MM-DD)" value={date} onChangeText={v=>{setDate(v);setTime('');}} placeholder="2026-11-02"/>
-      <Text style={styles.hint}>Use YYYY-MM-DD format. Past dates are not accepted.</Text>
+     <Text style={styles.label}>Appointment Date</Text>
+
+<TouchableOpacity
+  style={styles.input}
+  onPress={() => setShowDatePicker(true)}
+>
+  <Text style={{color: C.text, fontSize: 14}}>
+    {new Date(`${date}T00:00:00`).toLocaleDateString()}
+  </Text>
+</TouchableOpacity>
+
+{showDatePicker && (
+  <DateTimePicker
+    value={new Date(`${date}T00:00:00`)}
+    mode="date"
+    display="default"
+    minimumDate={new Date()}
+    onChange={(event, selectedDate) => {
+      setShowDatePicker(false);
+
+      if (event.type === 'set' && selectedDate) {
+        const y = selectedDate.getFullYear();
+        const m = String(selectedDate.getMonth() + 1).padStart(2, '0');
+        const d = String(selectedDate.getDate()).padStart(2, '0');
+
+        setDate(`${y}-${m}-${d}`);
+        setTime('');
+      }
+    }}
+  />
+)}
+{clinicClosed && (
+  <Text style={{color:C.red,fontWeight:'800',marginTop:10}}>
+    The clinic is closed on this date. Please select another date.
+  </Text>
+)}
       <Text style={styles.sectionTitle}>3. Choose an available time</Text>
       {doctor&&<Text style={styles.muted}>{doctor.shift} shift · {displayTime(doctor.start_time)}–{displayTime(doctor.end_time)}</Text>}
       <View style={styles.slotGrid}>{slots.map(s=><TouchableOpacity key={s.time} disabled={!s.available} onPress={()=>setTime(s.time)}
@@ -321,20 +409,153 @@ function PatientAppointments({user,onBack,onLogout,reload}) {
 }
 
 function AvailabilityScreen({onBack,onLogout}) {
-  const [date,setDate]=useState(todayISO()); const [data,setData]=useState([]);
-  const load=async()=>{try{setData(await getAvailability(date));}catch(e){Alert.alert('Availability error',e.message);}};
-  useEffect(()=>{load();},[date]);
-  return <ScrollView contentContainerStyle={styles.screen}>
-    <Header title="Date availability" subtitle="Check open and booked dentist slots" onBack={onBack} onLogout={onLogout}/>
-    <Field label="Date (YYYY-MM-DD)" value={date} onChangeText={setDate}/>
-    <Text style={styles.hint}>A slot is unavailable only for the same dentist, date and time. Other dentists remain bookable.</Text>
-    {data.map(d=><Card key={d.id}><Text style={styles.cardTitle}>{d.name}</Text><Text style={styles.muted}>{d.shift} · {displayTime(d.start_time)}–{displayTime(d.end_time)}</Text>
-      <View style={styles.slotGrid}>{d.slots.map(s=><View key={s.time} style={[styles.slot,s.available?styles.slotOpen:styles.slotClosed]}>
-        <Text style={[styles.slotText,!s.available&&{color:'#A0AAB2'}]}>{displayTime(s.time)}</Text>
-        <Text style={[styles.slotSub,!s.available&&{color:'#A0AAB2'}]}>{s.available?'Available':'Booked'}</Text>
-      </View>)}</View>
-    </Card>)}
-  </ScrollView>;
+  const [date,setDate] = useState(todayISO());
+  const [showPicker,setShowPicker] = useState(false);
+  const [data,setData] = useState([]);
+  const [closedInfo,setClosedInfo] = useState(null);
+  const [reason,setReason] = useState('');
+
+  const load = async () => {
+    try {
+      const result = await getAvailability(date);
+      const closure = await getDateAvailability(date);
+
+      setData(result);
+      setClosedInfo(closure);
+      setReason(closure?.reason || '');
+    } catch(e) {
+      Alert.alert('Availability error', e.message);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, [date]);
+
+  const saveStatus = async (status) => {
+    try {
+      await setDateAvailability(date, status, reason);
+      await load();
+
+      Alert.alert(
+        'Date availability updated',
+        status === 'Available'
+          ? 'This date is now available for booking.'
+          : 'The clinic is now closed on this date.'
+      );
+    } catch(e) {
+      Alert.alert('Update failed', e.message);
+    }
+  };
+
+  return (
+    <ScrollView contentContainerStyle={styles.screen}>
+      <Header
+        title="Date availability"
+        subtitle="Manage clinic operating dates"
+        onBack={onBack}
+        onLogout={onLogout}
+      />
+
+      <Card>
+        <Text style={styles.cardTitle}>Select calendar date</Text>
+
+        <TouchableOpacity
+          style={styles.input}
+          onPress={() => setShowPicker(true)}
+        >
+          <Text style={{color:C.text}}>
+            {new Date(`${date}T00:00:00`).toLocaleDateString()}
+          </Text>
+        </TouchableOpacity>
+
+        {showPicker && (
+          <DateTimePicker
+            value={new Date(`${date}T00:00:00`)}
+            mode="date"
+            display="default"
+            onChange={(event, selectedDate) => {
+              setShowPicker(false);
+
+              if(event.type === 'set' && selectedDate) {
+                const y = selectedDate.getFullYear();
+                const m = String(selectedDate.getMonth()+1).padStart(2,'0');
+                const d = String(selectedDate.getDate()).padStart(2,'0');
+
+                setDate(`${y}-${m}-${d}`);
+              }
+            }}
+          />
+        )}
+
+        <Text style={styles.sectionTitle}>Clinic date status</Text>
+
+        <Text style={styles.body}>
+          Current status: {closedInfo ? 'Holiday / Closed' : 'Available'}
+        </Text>
+
+        <Field
+          label="Reason (example: Public Holiday)"
+          value={reason}
+          onChangeText={setReason}
+          placeholder="Enter reason for closing"
+        />
+
+        <Button
+          title="Set as Holiday / Closed"
+          kind="danger"
+          onPress={() => saveStatus('Closed')}
+        />
+
+        <Button
+          title="Set as Available"
+          kind="success"
+          onPress={() => saveStatus('Available')}
+        />
+      </Card>
+
+      <Text style={styles.sectionTitle}>Doctor time-slot availability</Text>
+
+      {closedInfo && (
+        <Card>
+          <Text style={{color:C.red,fontWeight:'900'}}>
+            CLINIC CLOSED
+          </Text>
+          <Text style={styles.body}>
+            Reason: {closedInfo.reason || 'No reason provided'}
+          </Text>
+        </Card>
+      )}
+
+      {data.map(d => (
+        <Card key={d.id}>
+          <Text style={styles.cardTitle}>{d.name}</Text>
+          <Text style={styles.muted}>
+            {d.shift} · {displayTime(d.start_time)}–{displayTime(d.end_time)}
+          </Text>
+
+          <View style={styles.slotGrid}>
+            {d.slots.map(s => (
+              <View
+                key={s.time}
+                style={[
+                  styles.slot,
+                  s.available ? styles.slotOpen : styles.slotClosed
+                ]}
+              >
+                <Text style={styles.slotText}>
+                  {displayTime(s.time)}
+                </Text>
+                <Text style={styles.slotSub}>
+                  {closedInfo ? 'Clinic Closed' : s.available ? 'Available' : 'Booked'}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </Card>
+      ))}
+    </ScrollView>
+  );
 }
 
 const styles=StyleSheet.create({
@@ -381,5 +602,6 @@ const styles=StyleSheet.create({
   doctorChoiceActive:{borderColor:C.blue,backgroundColor:C.pale},slotGrid:{flexDirection:'row',flexWrap:'wrap',gap:8,marginTop:10},
   slot:{width:'30.5%',minHeight:57,borderRadius:10,borderWidth:1,padding:8,alignItems:'center',justifyContent:'center'},
   slotOpen:{backgroundColor:'#F0FAF5',borderColor:'#B8E1CB'},slotClosed:{backgroundColor:'#F3F5F7',borderColor:'#E0E5E9'},
-  slotSelected:{backgroundColor:C.blue,borderColor:C.blue},slotText:{fontSize:12,fontWeight:'800',color:C.text},slotSub:{fontSize:10,color:C.green,marginTop:3,fontWeight:'700'}
+  slotSelected:{backgroundColor:C.blue,borderColor:C.blue},slotText:{fontSize:12,fontWeight:'800',color:C.text},slotSub:{fontSize:10,color:C.green,marginTop:3,fontWeight:'700'},successButton: {
+  backgroundColor: '#21865B'},warningButton: {backgroundColor: '#B97822'},infoButton: {backgroundColor: '#7654A5'},
 });

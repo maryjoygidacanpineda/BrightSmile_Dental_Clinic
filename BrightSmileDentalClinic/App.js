@@ -1,17 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, Platform,
   SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput,
   TouchableOpacity, View
 } from 'react-native';
 
-import DateTimePicker from '@react-native-community/datetimepicker';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import {
   addDoctor, createAppointment, deleteAppointment, deleteDoctor,
   getAllDoctors, getAppointments, getAvailability, getDoctors, login, registerPatient,
   updateAppointmentStatus, updateDoctorActive,
-  getDateAvailability, setDateAvailability, updateDoctorShift
+  getDateAvailability, setDateAvailability, updateDoctorShift, saveFollowUpDate,
+  rescheduleAppointment
 } from './src/db';
 
 const C = {
@@ -51,6 +52,7 @@ function Button({title,onPress,kind='primary',small=false,disabled=false}) {
         kind==='warning' && styles.warningButton,
         kind==='info' && styles.infoButton,
         kind==='ghost' && styles.ghostButton,
+        kind==='lightDanger'&&styles.lightDangerButton,
         small && styles.smallButton,
         disabled && {opacity:.45}
       ]}
@@ -69,12 +71,45 @@ function Button({title,onPress,kind='primary',small=false,disabled=false}) {
   );
 }
 function Field({label,value,onChangeText,placeholder,secureTextEntry,keyboardType,multiline}) {
-  return <View style={styles.fieldWrap}>
-    <Text style={styles.label}>{label}</Text>
-    <TextInput value={value} onChangeText={onChangeText} placeholder={placeholder||label}
-      placeholderTextColor="#91A2AF" secureTextEntry={secureTextEntry} keyboardType={keyboardType}
-      multiline={multiline} style={[styles.input,multiline&&{height:88,textAlignVertical:'top'}]}/>
-  </View>;
+  const [visible,setVisible] = useState(false);
+
+  return (
+    <View style={styles.fieldWrap}>
+      <Text style={styles.label}>{label}</Text>
+
+      <View style={{position:'relative',justifyContent:'center'}}>
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder||label}
+          placeholderTextColor="#91A2AF"
+          secureTextEntry={secureTextEntry && !visible}
+          keyboardType={keyboardType}
+          multiline={multiline}
+          style={[
+            styles.input,
+            secureTextEntry && {paddingRight:65},
+            multiline && {height:88,textAlignVertical:'top'}
+          ]}
+        />
+
+        {secureTextEntry && (
+          <TouchableOpacity
+            onPress={()=>setVisible(v=>!v)}
+            style={{
+              position:'absolute',
+              right:12,
+              padding:6
+            }}
+          >
+            <Text style={{color:C.blue,fontWeight:'800'}}>
+              {visible?'Hide':'Show'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
 }
 function Select({label,value,options,onChange}) {
   return <View style={styles.fieldWrap}>
@@ -90,15 +125,16 @@ function Select({label,value,options,onChange}) {
 function Header({title,subtitle,onBack,onLogout}) {
   return <View style={styles.header}>
     <View style={{flex:1}}>
-      {onBack ? <TouchableOpacity onPress={onBack}><Text style={styles.back}>‹ Back</Text></TouchableOpacity>:null}
+      
       <Text style={styles.headerTitle}>{title}</Text>
       {!!subtitle&&<Text style={styles.headerSub}>{subtitle}</Text>}
     </View>
     {onLogout&&<TouchableOpacity onPress={onLogout} style={styles.logout}><Text style={styles.logoutText}>Log out</Text></TouchableOpacity>}
+    <Button title="Back" kind="secondary" onPress={onBack}/>
   </View>;
 }
 function Status({status}) {
-  const color=status==='Completed'?C.green:status==='Cancelled'?C.red:C.blue;
+  const color=status==='Completed'? '#21865B': status==='Cancelled'? '#bb2424': C.blue;
   return <View style={[styles.status,{backgroundColor:color+'18'}]}><Text style={{color,fontWeight:'800',fontSize:11}}>{status}</Text></View>;
 }
 function Card({children}) { return <View style={styles.card}>{children}</View>; }
@@ -156,13 +192,6 @@ function LoginScreen({onLogin,onSignup,setLoading,loading}) {
         <Button title={loading?'Signing in…':'Sign in'} onPress={submit} disabled={loading}/>
         {role==='Patient'&&<Button title="Create patient account" kind="secondary" onPress={onSignup}/>}
       </View>
-      <Card><Text style={styles.cardTitle}>Demo accounts</Text>
-        <Text style={styles.demo}>Admin: admin@brightsmile.com / admin123</Text>
-        <Text style={styles.demo}>Doctor 1: maria@brightsmile.com / doctor123</Text>
-        <Text style={styles.demo}>Doctor 2: john@brightsmile.com / doctor123</Text>
-        <Text style={styles.demo}>Doctor 3: angela@brightsmile.com / doctor123</Text>
-        <Text style={styles.hint}>Choose the account type from the top-right Account menu.</Text>
-      </Card>
       <Text style={styles.footer}>Your smile, our priority.</Text>
     </ScrollView>
   </KeyboardAvoidingView>;
@@ -184,6 +213,7 @@ function SignupScreen({onBack,onDone}) {
       <Select label="Sex" value={sex} onChange={setSex} options={[{label:'Female',value:'Female'},{label:'Male',value:'Male'},{label:'Prefer not to say',value:'Prefer not to say'}]}/>
       <Field label="Age" value={age} onChangeText={setAge} keyboardType="number-pad"/>
       <Button title="Create patient account" onPress={submit}/>
+      <Button title="Back" kind="secondary" onPress={onBack}/>
     </ScrollView>
   </KeyboardAvoidingView>;
 }
@@ -241,6 +271,9 @@ function AdminDoctors({onBack,onLogout,reload}) {
       <Select label="Assigned shift" value={shift} onChange={setShift} options={shifts.map(s=>({label:s,value:s}))}/>
       <Text style={styles.hint}>Morning 8 AM–12 PM · Afternoon 1 PM–5 PM · Night 6 PM–9 PM</Text>
       <Button title="Add doctor" onPress={add}/>
+      ListFooterComponent={
+      <Button title="Back" kind="secondary" onPress={onBack}/>
+      }
     </Card>
     <Text style={styles.sectionTitle}>Current doctors ({doctors.length})</Text>
     {doctors.map(d=><Card key={d.id}><View style={styles.rowBetween}><View style={{flex:1}}><Text style={styles.cardTitle}>{d.name}</Text><Text style={styles.body}>{d.specialization}</Text><Text style={styles.muted}>{d.shift} · {displayTime(d.start_time)}–{displayTime(d.end_time)}</Text><Text style={styles.muted}>Login: {d.user_id ? 'Doctor account created' : 'No linked account'}</Text></View>
@@ -275,36 +308,429 @@ function AppointmentCard({item,actions,showPatient=true,showDoctor=true}) {
 }
 
 function AdminAppointments({onBack,onLogout,reload}) {
-  const [items,setItems]=useState([]); const [filter,setFilter]=useState('All');
+  const [items,setItems]=useState([]);
+  const [filter,setFilter]=useState('All');
+  const [doctorFilter,setDoctorFilter]=useState('All');
   const load=async()=>setItems(await getAppointments({}));
   useEffect(()=>{load();},[]);
-  const visible=items.filter(i=>filter==='All'||i.status===filter);
+  const doctorNames = [...new Set(items.map(i=>i.doctor_name))];
+
+const visible = items.filter(i =>
+  (filter==='All' || i.status===filter) &&
+  (doctorFilter==='All' || i.doctor_name===doctorFilter)
+);
   return <View style={styles.flex}><View style={styles.screen}>
     <Header title="All appointments" subtitle={`${items.length} total bookings`} onBack={onBack} onLogout={onLogout}/>
     <Select label="Filter by status" value={filter} onChange={setFilter} options={['All','Scheduled','Completed','Cancelled'].map(x=>({label:x,value:x}))}/>
+    <Select label="Filter by doctor" value={doctorFilter} onChange={setDoctorFilter} options={[
+    {label:'All doctors',value:'All'},...doctorNames.map(name=>({label:name,value:name}))]}/>
     <FlatList data={visible} keyExtractor={i=>String(i.id)} contentContainerStyle={{paddingBottom:30}}
       ListEmptyComponent={<Text style={styles.muted}>No appointments found.</Text>}
       renderItem={({item})=>(
         <AppointmentCard item={item}/>
       )}/>
+      <Button title="Back" kind="secondary" onPress={onBack}/>
   </View></View>;
 }
 
+
 function DoctorAppointments({user,onBack,onLogout,reload}) {
-  const [items,setItems]=useState([]); const [notes,setNotes]=useState({});
-  const load=async()=>setItems(await getAppointments({role:'doctor',userId:user.id}));
-  useEffect(()=>{load();},[]);
-  const change=async(item,status)=>{try{await updateAppointmentStatus(item.id,status,notes[item.id]??item.doctor_notes??'');await load();reload();}catch(e){Alert.alert('Update failed',e.message);}};
-  return <View style={styles.flex}><View style={styles.screen}>
-    <Header title="My appointments" subtitle="Patients assigned to your schedule" onBack={onBack} onLogout={onLogout}/>
-    <FlatList data={items} keyExtractor={i=>String(i.id)} contentContainerStyle={{paddingBottom:30}}
-      ListEmptyComponent={<Text style={styles.muted}>No appointments assigned yet.</Text>}
-      renderItem={({item})=><View><AppointmentCard item={item} showDoctor={false}/>
-        {item.status==='Scheduled'&&<Card><Field label="Appointment notes (optional)" value={notes[item.id]??item.doctor_notes??''} onChangeText={v=>setNotes(p=>({...p,[item.id]:v}))} multiline/>
-          <View style={styles.actionRow}><Button title="Mark completed" small kind="secondary" onPress={()=>change(item,'Completed')}/><Button title="Cancel" small kind="danger" onPress={()=>change(item,'Cancelled')}/></View>
-        </Card>}</View>}/>
-  </View></View>;
+  const [items,setItems] = useState([]);
+  const [notes,setNotes] = useState({});
+
+  const [followUpItem,setFollowUpItem] = useState(null);
+  const [followUpDate,setFollowUpDate] = useState(todayISO());
+  const [showFollowUpPicker,setShowFollowUpPicker] = useState(false);
+  const [followUpNote,setFollowUpNote] = useState('');
+
+  const [rescheduleItem,setRescheduleItem] = useState(null);
+  const [rescheduleDate,setRescheduleDate] = useState(todayISO());
+  const [showReschedulePicker,setShowReschedulePicker] = useState(false);
+  const [rescheduleAvailability,setRescheduleAvailability] = useState([]);
+  const [rescheduleTime,setRescheduleTime] = useState('');
+
+  const load = async () => {
+    try {
+      const result = await getAppointments({
+        role:'doctor',
+        userId:user.id
+      });
+      setItems(result);
+    } catch(e) {
+      Alert.alert('Loading error',e.message);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const change = async (item,status) => {
+    try {
+      await updateAppointmentStatus(
+        item.id,
+        status,
+        notes[item.id] ?? item.doctor_notes ?? ''
+      );
+
+      await load();
+      reload();
+
+      Alert.alert('Updated',`Appointment marked as ${status}.`);
+    } catch(e) {
+      Alert.alert('Update failed',e.message);
+    }
+  };
+
+  const saveFollowUp = async () => {
+    if (!followUpItem || !followUpDate) {
+      Alert.alert('Select a date','Please choose a follow-up date.');
+      return;
+    }
+
+    try {
+      await saveFollowUpDate(
+        followUpItem.id,
+        followUpDate,
+        followUpNote
+      );
+
+      setFollowUpItem(null);
+      setShowFollowUpPicker(false);
+      setFollowUpNote('');
+
+      await load();
+      reload();
+
+      Alert.alert(
+        'Follow-up saved',
+        'The patient can now see the next check-up date.'
+      );
+    } catch(e) {
+      Alert.alert('Save failed',e.message);
+    }
+  };
+
+  const openReschedule = async item => {
+    setRescheduleItem(item);
+    setRescheduleDate(item.appointment_date);
+    setRescheduleTime('');
+
+    try {
+      setRescheduleAvailability(
+        await getAvailability(item.appointment_date)
+      );
+    } catch(e) {
+      Alert.alert('Availability error',e.message);
+    }
+  };
+
+  const chooseRescheduleDate = async date => {
+    setRescheduleDate(date);
+    setRescheduleTime('');
+
+    try {
+      setRescheduleAvailability(
+        await getAvailability(date)
+      );
+    } catch(e) {
+      Alert.alert('Availability error',e.message);
+    }
+  };
+
+  const saveReschedule = async () => {
+    if (!rescheduleItem || !rescheduleTime) {
+      Alert.alert('Choose a time','Please select an available time.');
+      return;
+    }
+
+    try {
+      await rescheduleAppointment(
+        rescheduleItem.id,
+        rescheduleDate,
+        rescheduleTime
+      );
+
+      setRescheduleItem(null);
+      setShowReschedulePicker(false);
+      setRescheduleTime('');
+
+      await load();
+      reload();
+
+      Alert.alert(
+        'Rescheduled',
+        'The patient appointment date and time have been updated.'
+      );
+    } catch(e) {
+      Alert.alert('Reschedule failed',e.message);
+    }
+  };
+
+  const selectedDoctorAvailability = rescheduleAvailability.find(
+    d => d.id === rescheduleItem?.doctor_id
+  );
+
+  return (
+    <View style={styles.flex}>
+
+      {/* DOCTOR APPOINTMENT LIST */}
+      <View style={styles.screen}>
+        <Header
+          title="My appointments"
+          subtitle="Patients assigned to your schedule"
+          onLogout={onLogout}
+        />
+
+        <FlatList
+          data={items}
+          keyExtractor={i=>String(i.id)}
+          contentContainerStyle={{paddingBottom:20}}
+
+          ListEmptyComponent={
+            <Text style={styles.muted}>
+              No appointments assigned yet.
+            </Text>
+          }
+
+          ListFooterComponent={
+            <Button
+              title="Back"
+              kind="secondary"
+              onPress={onBack}
+            />
+          }
+
+          renderItem={({item})=>(
+            <View>
+              <AppointmentCard
+                item={item}
+                showDoctor={false}
+              />
+
+              {/* SCHEDULED APPOINTMENT */}
+              {item.status==='Scheduled' && (
+                <Card>
+                  <Field
+                    label="Appointment notes (optional)"
+                    value={notes[item.id] ?? item.doctor_notes ?? ''}
+                    onChangeText={v=>setNotes(p=>({
+                      ...p,
+                      [item.id]:v
+                    }))}
+                    multiline
+                  />
+
+                  <View style={styles.actionRow}>
+                    <Button
+                      title="Mark completed"
+                      small
+                      kind="secondary"
+                      onPress={()=>change(item,'Completed')}
+                    />
+
+                    <Button
+                      title="Cancel"
+                      small
+                      kind="danger"
+                      onPress={()=>change(item,'Cancelled')}
+                    />
+
+                    <Button
+                      title="Re-schedule"
+                      small
+                      kind="secondary"
+                      onPress={()=>openReschedule(item)}
+                    />
+                  </View>
+                </Card>
+              )}
+
+              {/* COMPLETED APPOINTMENT */}
+              {item.status==='Completed' && (
+                <Card>
+                  {item.follow_up_date ? (
+                    <Text style={styles.body}>
+                      Follow-up check-up: {item.follow_up_date}
+                    </Text>
+                  ) : (
+                    <Text style={styles.muted}>
+                      No follow-up date added.
+                    </Text>
+                  )}
+
+                  <Button
+                    title="Follow-up Check-up"
+                    kind="secondary"
+                    onPress={()=>{
+                      setFollowUpItem(item);
+                      setFollowUpDate(
+                        item.follow_up_date || todayISO()
+                      );
+                      setFollowUpNote(
+                        item.follow_up_note || ''
+                      );
+                    }}
+                  />
+                </Card>
+              )}
+            </View>
+          )}
+        />
+      </View>
+
+      {/* FOLLOW-UP CHECK-UP FORM */}
+      {followUpItem && (
+        <View style={styles.screen}>
+          <Card>
+            <Text style={styles.cardTitle}>
+              Follow-up Check-up
+            </Text>
+
+            <Text style={styles.body}>
+              Patient: {followUpItem.patient_name}
+            </Text>
+
+            <Button
+              title={`Choose date: ${followUpDate}`}
+              kind="secondary"
+              onPress={()=>setShowFollowUpPicker(true)}
+            />
+
+            {showFollowUpPicker && (
+              <DateTimePicker
+                value={new Date(`${followUpDate}T00:00:00`)}
+                mode="date"
+                minimumDate={new Date()}
+                onChange={(event,date)=>{
+                  setShowFollowUpPicker(false);
+
+                  if(event.type==='set' && date) {
+                    const y = date.getFullYear();
+                    const m = String(date.getMonth()+1).padStart(2,'0');
+                    const d = String(date.getDate()).padStart(2,'0');
+
+                    setFollowUpDate(`${y}-${m}-${d}`);
+                  }
+                }}
+              />
+            )}
+
+            <Field
+              label="Follow-up instructions (optional)"
+              value={followUpNote}
+              onChangeText={setFollowUpNote}
+              multiline
+            />
+
+            <Button
+              title="Save Follow-up"
+              onPress={saveFollowUp}
+            />
+
+            <Button
+              title="Close"
+              kind="secondary"
+              onPress={()=>{
+                setFollowUpItem(null);
+                setShowFollowUpPicker(false);
+              }}
+            />
+          </Card>
+        </View>
+      )}
+
+      {/* RESCHEDULE APPOINTMENT FORM */}
+      {rescheduleItem && (
+        <View style={styles.screen}>
+          <Card>
+            <Text style={styles.cardTitle}>
+              Re-schedule Appointment
+            </Text>
+
+            <Text style={styles.body}>
+              Patient: {rescheduleItem.patient_name}
+            </Text>
+
+            <Button
+              title={`Choose new date: ${rescheduleDate}`}
+              kind="secondary"
+              onPress={()=>setShowReschedulePicker(true)}
+            />
+
+            {showReschedulePicker && (
+              <DateTimePicker
+                value={new Date(`${rescheduleDate}T00:00:00`)}
+                mode="date"
+                minimumDate={new Date()}
+                onChange={async(event,date)=>{
+                  setShowReschedulePicker(false);
+
+                  if(event.type==='set' && date) {
+                    const y = date.getFullYear();
+                    const m = String(date.getMonth()+1).padStart(2,'0');
+                    const d = String(date.getDate()).padStart(2,'0');
+
+                    await chooseRescheduleDate(
+                      `${y}-${m}-${d}`
+                    );
+                  }
+                }}
+              />
+            )}
+
+            <Text style={styles.label}>
+              Available times
+            </Text>
+
+            <View style={styles.slotGrid}>
+              {(selectedDoctorAvailability?.slots || []).map(slot=>(
+                <TouchableOpacity
+                  key={slot.time}
+                  disabled={!slot.available}
+                  onPress={()=>setRescheduleTime(slot.time)}
+                  style={[
+                    styles.slot,
+                    slot.available
+                      ? styles.slotOpen
+                      : styles.slotClosed,
+                    rescheduleTime===slot.time &&
+                      styles.slotSelected
+                  ]}
+                >
+                  <Text style={styles.slotText}>
+                    {displayTime(slot.time)}
+                  </Text>
+
+                  <Text style={styles.slotSub}>
+                    {slot.available ? 'Available' : 'Booked'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Button
+              title="Save New Appointment"
+              onPress={saveReschedule}
+              disabled={!rescheduleTime}
+            />
+
+            <Button
+              title="Close"
+              kind="secondary"
+              onPress={()=>{
+                setRescheduleItem(null);
+                setShowReschedulePicker(false);
+              }}
+            />
+          </Card>
+        </View>
+      )}
+
+    </View>
+  );
 }
+
 
 function BookingScreen({user,onBack,onLogout,reload}) {
   const [doctors,setDoctors]=useState([]); const [doctorId,setDoctorId]=useState(null);
@@ -391,6 +817,7 @@ Alert.alert(
       <Text style={styles.sectionTitle}>4. Your dental concern</Text>
       <Field label="Tell the dentist why you need an appointment" value={concern} onChangeText={setConcern} multiline placeholder="Example: toothache, cleaning, consultation…"/>
       <Button title={busy?'Booking…':'Confirm booking'} onPress={book} disabled={busy}/>
+      <Button title="Back" kind="secondary" onPress={onBack}/>
     </ScrollView>
   </KeyboardAvoidingView>;
 }
@@ -405,6 +832,9 @@ function PatientAppointments({user,onBack,onLogout,reload}) {
     <FlatList data={items} keyExtractor={i=>String(i.id)} contentContainerStyle={{paddingBottom:30}}
       ListEmptyComponent={<Text style={styles.muted}>You have no appointments yet.</Text>}
       renderItem={({item})=><AppointmentCard item={item} showPatient={false} actions={item.status==='Scheduled'?<Button title="Cancel appointment" small kind="danger" onPress={()=>cancel(item)}/>:null}/>}/>
+    ListFooterComponent={
+  <Button title="Back" kind="secondary" onPress={onBack}/>
+}
   </View></View>;
 }
 
@@ -503,7 +933,7 @@ function AvailabilityScreen({onBack,onLogout}) {
 
         <Button
           title="Set as Holiday / Closed"
-          kind="danger"
+          kind="secondary"
           onPress={() => saveStatus('Closed')}
         />
 
@@ -551,6 +981,9 @@ function AvailabilityScreen({onBack,onLogout}) {
                 </Text>
               </View>
             ))}
+            ListFooterComponent={
+            <Button title="Back" kind="secondary" onPress={onBack}/>
+            }
           </View>
         </Card>
       ))}
@@ -604,4 +1037,5 @@ const styles=StyleSheet.create({
   slotOpen:{backgroundColor:'#F0FAF5',borderColor:'#B8E1CB'},slotClosed:{backgroundColor:'#F3F5F7',borderColor:'#E0E5E9'},
   slotSelected:{backgroundColor:C.blue,borderColor:C.blue},slotText:{fontSize:12,fontWeight:'800',color:C.text},slotSub:{fontSize:10,color:C.green,marginTop:3,fontWeight:'700'},successButton: {
   backgroundColor: '#21865B'},warningButton: {backgroundColor: '#B97822'},infoButton: {backgroundColor: '#7654A5'},
+  lightDangerButton: {backgroundColor:'#FFF5F5', borderWidth:1, borderColor:'#F5DADA'},
 });
